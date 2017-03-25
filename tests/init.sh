@@ -269,6 +269,10 @@ check_prog rm
 
 rm -f "$LOG"
 
+STRACE_TEST_SAMPLE="$NAME.$$.sample"
+export STRACE_TEST_SAMPLE
+rm -rf -- "$STRACE_TEST_SAMPLE"
+
 [ -n "${STRACE-}" ] || {
 	STRACE=../strace
 	case "${LOG_COMPILER-} ${LOG_FLAGS-}" in

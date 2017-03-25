@@ -1,6 +1,7 @@
 *.log
 *.log.*
 *.o
+*.sample
 *.tmp
 *.tmp-*
 *.tmp.*
