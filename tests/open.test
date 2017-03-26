@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# Check open syscall decoding.
+# Check decoding of open syscall.
 
 . "${srcdir=.}/init.sh"
-run_strace_match_diff -a30 -P $NAME.sample
+run_strace_match_diff -a33 -P "$STRACE_TEST_SAMPLE"
