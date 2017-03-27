@@ -1,5 +1,8 @@
 /*
+ * Check decoding of openat syscall.
+ *
  * Copyright (c) 2016 Katerina Koukiou <k.koukiou@gmail.com>
+ * Copyright (c) 2016-2017 The strace developers.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -37,7 +40,7 @@
 int
 main(void)
 {
-	static const char sample[] = "openat.sample";
+	const char *const sample = get_sample_name();
 
 	long fd = syscall(__NR_openat, -100, sample, O_RDONLY|O_CREAT, 0400);
 	printf("openat(AT_FDCWD, \"%s\", O_RDONLY|O_CREAT, 0400) = %s\n",
