@@ -1,7 +1,7 @@
 /*
  * Check decoding of pread64 and pwrite64 syscalls.
  *
- * Copyright (c) 2016 Dmitry V. Levin <ldv@altlinux.org>
+ * Copyright (c) 2016-2017 Dmitry V. Levin <ldv@altlinux.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -123,11 +123,11 @@ main(void)
 {
 	tprintf("%s", "");
 
-	static char tmp[] = "pread64-pwrite64-tmpfile";
-	if (open(tmp, O_CREAT|O_RDONLY|O_TRUNC, 0600) != 0)
-		perror_msg_and_fail("creat: %s", tmp);
-	if (open(tmp, O_WRONLY) != 1)
-		perror_msg_and_fail("open: %s", tmp);
+	const char *const sample = get_sample_name();
+	if (open(sample, O_CREAT|O_RDONLY|O_TRUNC, 0600) != 0)
+		perror_msg_and_fail("creat: %s", sample);
+	if (open(sample, O_WRONLY) != 1)
+		perror_msg_and_fail("open: %s", sample);
 
 	char *nil = tail_alloc(1);
 	*nil = '\0';
