@@ -8,11 +8,10 @@
 [ -d /proc/self/fd/ ] ||
 	framework_skip_ '/proc/self/fd/ is not available'
 
-tmpfile=read-write-tmpfile
-> $tmpfile
+> "$STRACE_TEST_SAMPLE"
 
 run_strace_match_diff \
 	-a15 -eread=0 -ewrite=1 -e trace=read,write \
-	-P $tmpfile -P /dev/zero -P /dev/null
+	-P "$STRACE_TEST_SAMPLE" -P /dev/zero -P /dev/null
 
-rm -f $tmpfile
+rm -f -- "$STRACE_TEST_SAMPLE"
