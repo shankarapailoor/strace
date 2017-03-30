@@ -1,5 +1,7 @@
 /*
- * Copyright (c) 2015-2016 Dmitry V. Levin <ldv@altlinux.org>
+ * Check decoding of stat family syscalls.
+ *
+ * Copyright (c) 2015-2017 Dmitry V. Levin <ldv@altlinux.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -266,7 +268,7 @@ main(void)
 # if !IS_FSTAT
 	static const char full[] = "/dev/full";
 # endif
-	static const char sample[] = TEST_SYSCALL_STR ".sample";
+	const char *const sample = get_sample_name();
 	TAIL_ALLOC_OBJECT_CONST_PTR(STRUCT_STAT, st);
 
 	int rc;

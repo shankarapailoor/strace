@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# Check fstat syscall decoding.
+# Check decoding of fstat syscall.
 
 . "${srcdir=.}/init.sh"
 
@@ -8,11 +8,9 @@
 [ -d /proc/self/fd/ ] ||
 	framework_skip_ '/proc/self/fd/ is not available'
 
-syscall=$NAME
 run_prog > /dev/null
-sample=$syscall.sample
-> "$sample"
-run_strace -ve$syscall -P$sample -a21 $args > "$OUT"
+> "$STRACE_TEST_SAMPLE"
+run_strace -v -e$NAME -P "$STRACE_TEST_SAMPLE" -a21 $args > "$OUT"
 match_diff "$LOG" "$OUT"
 rm -f "$OUT"
 
