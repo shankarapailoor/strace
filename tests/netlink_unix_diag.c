@@ -1,7 +1,7 @@
 /*
  * This file is part of net-yy-unix strace test.
  *
- * Copyright (c) 2014-2016 Dmitry V. Levin <ldv@altlinux.org>
+ * Copyright (c) 2014-2017 Dmitry V. Levin <ldv@altlinux.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -125,19 +125,20 @@ check_responses(const int fd)
 		error_msg_and_skip("short response");
 }
 
-#define SUN_PATH "netlink_unix_diag_socket"
 int main(void)
 {
-	struct sockaddr_un addr = {
-		.sun_family = AF_UNIX,
-		.sun_path = SUN_PATH
-	};
-	socklen_t len = offsetof(struct sockaddr_un, sun_path) + sizeof(SUN_PATH);
+	struct sockaddr_un addr = { .sun_family = AF_UNIX };
+	const char *const sample = get_sample_name();
+	socklen_t len = strlen(sample);
+	if ((unsigned) len > sizeof(addr.sun_path))
+		len = sizeof(addr.sun_path);
+	memcpy(addr.sun_path, sample, len);
+	len += offsetof(struct sockaddr_un, sun_path);
 
 	close(0);
 	close(1);
 
-	(void) unlink(SUN_PATH);
+	(void) unlink(sample);
 	if (socket(AF_UNIX, SOCK_STREAM, 0))
 		perror_msg_and_skip("socket AF_UNIX");
 	if (bind(0, (struct sockaddr *) &addr, len))
@@ -145,7 +146,7 @@ int main(void)
 	if (listen(0, 5))
 		perror_msg_and_skip("listen");
 
-	assert(unlink(SUN_PATH) == 0);
+	assert(unlink(sample) == 0);
 
 	if (socket(AF_NETLINK, SOCK_RAW, NETLINK_SOCK_DIAG) != 1)
 		perror_msg_and_skip("socket AF_NETLINK");
