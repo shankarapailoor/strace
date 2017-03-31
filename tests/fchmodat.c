@@ -1,7 +1,7 @@
 /*
  * Check decoding of fchmodat syscall.
  *
- * Copyright (c) 2016 Dmitry V. Levin <ldv@altlinux.org>
+ * Copyright (c) 2016-2017 Dmitry V. Levin <ldv@altlinux.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -40,7 +40,7 @@
 int
 main(void)
 {
-	static const char sample[] = "fchmodat_sample";
+	const char *const sample = get_sample_name();
 
 	if (open(sample, O_RDONLY | O_CREAT, 0400) < 0)
 		perror_msg_and_fail("open");
