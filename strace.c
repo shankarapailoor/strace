@@ -36,6 +36,9 @@
 #include <sys/resource.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/mman.h>
+#include <sys/ioctl.h>
 #include <pwd.h>
 #include <grp.h>
 #include <dirent.h>
@@ -74,6 +77,8 @@ const unsigned int syscall_trap_sig = SIGTRAP | 0x80;
 
 cflag_t cflag = CFLAG_NONE;
 unsigned int followfork = 0;
+unsigned int kcov_enabled = 0;
+unsigned long *main_tracee_cover = NULL;
 unsigned int ptrace_setoptions = PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEEXEC
 				 | PTRACE_O_TRACEEXIT;
 unsigned int xflag = 0;
@@ -543,6 +548,7 @@ strace_popen(const char *command)
 
 	set_cloexec_flag(fds[1]); /* never fails */
 
+	printf("STRACE_POPEN\n");	
 	pid = vfork();
 	if (pid < 0)
 		perror_msg_and_die("vfork");
@@ -1301,7 +1307,7 @@ startup_child(char **argv)
 	const char *filename;
 	size_t filename_len;
 	char pathname[PATH_MAX];
-	int pid;
+	int pid, kcov_fd;
 	struct tcb *tcp;
 
 	filename = argv[0];
@@ -1375,7 +1381,24 @@ startup_child(char **argv)
 	 * It's hard to know when that happens, so we just leak it.
 	 */
 	params_for_tracee.pathname = NOMMU_SYSTEM ? xstrdup(pathname) : pathname;
-
+	if (kcov_enabled) {
+		printf("HERE\n");
+		kcov_fd = open("/sys/kernel/debug/kcov", O_RDWR);
+		if (kcov_fd == -1)
+			perror_msg_and_die("open");
+		if (ioctl(kcov_fd, KCOV_INIT_TRACE, COVER_SIZE))
+			perror_msg_and_die("ioctl");
+		main_tracee_cover = (unsigned long *) mmap(NULL,
+							COVER_SIZE * sizeof(unsigned long),
+							PROT_READ | PROT_WRITE,
+							MAP_SHARED,
+							kcov_fd,
+							0);
+		if ((void *)main_tracee_cover == MAP_FAILED)
+			perror_msg_and_die("mmap");
+							
+							 
+	}
 #if defined HAVE_PRCTL && defined PR_SET_PTRACER && defined PR_SET_PTRACER_ANY
 	if (daemonized_tracer)
 		prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY);
@@ -1392,6 +1415,11 @@ startup_child(char **argv)
 		 * -D: we are parent
 		 * not -D: we are child
 		 */
+		if (kcov_enabled) {
+			if (ioctl(kcov_fd, KCOV_ENABLE, 0))
+				perror_msg_and_die("ioctl");
+		}
+
 		exec_or_die();
 	}
 
@@ -1433,6 +1461,10 @@ startup_child(char **argv)
 		tcp->flags |= TCB_ATTACHED | TCB_STARTUP
 			    | TCB_SKIP_DETACH_ON_FIRST_EXEC
 			    | (NOMMU_SYSTEM ? 0 : (TCB_HIDE_LOG | post_attach_sigstop));
+		if (kcov_enabled) {
+			tcp->kcov_meta.mmap_area = (unsigned long) main_tracee_cover;
+			tcp->kcov_meta.is_main_tracee = 1;
+		}
 		newoutf(tcp);
 	}
 	else {
@@ -1606,7 +1638,7 @@ init(int argc, char *argv[])
 #endif
 	qualify("signal=all");
 	while ((c = getopt(argc, argv,
-		"+b:cCdfFhiqrtTvVwxyz"
+		"+b:cCdkfFhiqrtTvVwxyz"
 #ifdef USE_LIBUNWIND
 		"k"
 #endif
@@ -1645,6 +1677,9 @@ init(int argc, char *argv[])
 			break;
 		case 'h':
 			usage();
+			break;
+		case 'k':
+			kcov_enabled=1;
 			break;
 		case 'i':
 			iflag = 1;
@@ -1735,6 +1770,7 @@ init(int argc, char *argv[])
 		}
 	}
 	argv += optind;
+	printf("KCOV ENABLED: %u\n", kcov_enabled);
 	/* argc -= optind; - no need, argc is not used below */
 
 	acolumn_spaces = xmalloc(acolumn + 1);
@@ -2043,6 +2079,9 @@ maybe_allocate_tcb(const int pid, int status)
 		/* We assume it's a fork/vfork/clone child */
 		struct tcb *tcp = alloctcb(pid);
 		tcp->flags |= TCB_ATTACHED | TCB_STARTUP | post_attach_sigstop;
+		tcp->kcov_meta.is_main_tracee = false;
+		tcp->kcov_meta.just_forked = 1;
+		tcp->kcov_meta.buf_pos = 0;
 		newoutf(tcp);
 		if (!qflag)
 			error_msg("Process %d attached", pid);

@@ -58,6 +58,10 @@
 #include "gcc_compat.h"
 #include "sysent.h"
 
+#define KCOV_INIT_TRACE _IOR('c', 1, unsigned long)
+#define KCOV_ENABLE _IO('c', 100)
+#define COVER_SIZE (16 << 20)
+
 #ifndef HAVE_STRERROR
 const char *strerror(int);
 #endif
@@ -208,6 +212,13 @@ struct inject_opts {
 #define MAX_ERRNO_VALUE			4095
 #define INJECT_OPTS_RVAL_DEFAULT	(-(MAX_ERRNO_VALUE + 1))
 
+struct kcov_meta {
+	unsigned long mmap_area;
+	unsigned long just_forked;
+	unsigned long buf_pos;
+	int is_main_tracee;
+};
+
 /* Trace Control Block */
 struct tcb {
 	int flags;		/* See below for TCB_ values */
@@ -232,6 +243,7 @@ struct tcb {
 	struct timeval stime;	/* System time usage as of last process wait */
 	struct timeval dtime;	/* Delta for system time usage */
 	struct timeval etime;	/* Syscall entry time */
+	struct kcov_meta kcov_meta;	
 
 #ifdef USE_LIBUNWIND
 	struct UPT_info* libunwind_ui;
@@ -285,7 +297,8 @@ struct tcb {
 #define exiting(tcp)	((tcp)->flags & TCB_INSYSCALL)
 #define syserror(tcp)	((tcp)->u_error != 0)
 #define verbose(tcp)	((tcp)->qual_flg & QUAL_VERBOSE)
-#define abbrev(tcp)	((tcp)->qual_flg & QUAL_ABBREV)
+/* #define abbrev(tcp)	((tcp)->qual_flg & QUAL_ABBREV) */
+#define abbrev(tcp)   0
 #define filtered(tcp)	((tcp)->flags & TCB_FILTERED)
 #define hide_log(tcp)	((tcp)->flags & TCB_HIDE_LOG)
 
@@ -373,6 +386,7 @@ extern const char **paths_selected;
 #define tracing_paths (paths_selected != NULL)
 extern unsigned xflag;
 extern unsigned followfork;
+extern unsigned int kcov_enabled;
 #ifdef USE_LIBUNWIND
 /* if this is true do the stack trace for every system call */
 extern bool stack_trace_enabled;

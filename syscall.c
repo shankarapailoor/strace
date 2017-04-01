@@ -35,7 +35,8 @@
 #include "native_defs.h"
 #include "nsig.h"
 #include <sys/param.h>
-
+#include <sys/types.h>
+#include <sys/wait.h>
 /* for struct iovec */
 #include <sys/uio.h>
 
@@ -44,6 +45,7 @@
 
 #include "regs.h"
 #include "ptrace.h"
+#include "setup_kcov.c"
 
 #if defined(SPARC64)
 # undef PTRACE_GETREGS
@@ -562,6 +564,7 @@ static int arch_set_scno(struct tcb *, kernel_ulong_t);
 static void get_error(struct tcb *, const bool);
 static int arch_set_error(struct tcb *);
 static int arch_set_success(struct tcb *);
+static unsigned long setup_kcov(pid_t pid);
 
 struct inject_opts *inject_vec[SUPPORTED_PERSONALITIES];
 
@@ -572,7 +575,11 @@ tcb_inject_opts(struct tcb *tcp)
 	       ? &tcp->inject_vec[current_personality][tcp->scno] : NULL;
 }
 
-
+unsigned long get_pos(struct tcb *tcp) {
+	if (tcp->kcov_meta.is_main_tracee)
+		return __atomic_load_n((unsigned long *)tcp->kcov_meta.mmap_area, __ATOMIC_RELAXED);
+	return  ptrace(PTRACE_PEEKDATA, tcp->pid, tcp->kcov_meta.mmap_area, NULL);
+}
 static long
 tamper_with_syscall_entering(struct tcb *tcp, unsigned int *signo)
 {
@@ -642,6 +649,11 @@ trace_syscall_entering(struct tcb *tcp, unsigned int *sig)
 {
 	int res, scno_good;
 
+	if (kcov_enabled && tcp->kcov_meta.just_forked) {
+		tcp->kcov_meta.mmap_area = setup_kcov(tcp->pid);
+		tcp->kcov_meta.just_forked = 0;
+		tcp->kcov_meta.buf_pos = get_pos(tcp);
+	}
 	scno_good = res = get_scno(tcp);
 	if (res == 0)
 		return res;
@@ -744,6 +756,46 @@ static bool
 syscall_tampered(struct tcb *tcp)
 {
 	return tcp->flags & TCB_TAMPERED;
+}
+
+
+int cover_buf_flush(struct tcb *tcp) {
+	unsigned long cover_addr;
+	unsigned long ip;
+	int i, j;
+	long n;
+	pid_t pid;
+
+	pid = tcp->pid;
+	i = j = tcp->kcov_meta.buf_pos;
+	cover_addr = tcp->kcov_meta.mmap_area;
+
+	if (tcp->kcov_meta.is_main_tracee) {
+		n = __atomic_load_n((unsigned long *)cover_addr, __ATOMIC_RELAXED);
+	} else if ((n = ptrace(PTRACE_PEEKDATA, pid, cover_addr, NULL)) < 0) {
+		perror("PTRACE_PEEKDATA");
+		return -1;
+	}
+	
+	fprintf(stderr, "pid: %d, N: %ld\n", tcp->pid, n);
+	while(i < n) {
+		if (!tcp->kcov_meta.is_main_tracee) {
+			ip = ptrace(PTRACE_PEEKDATA, pid, cover_addr + (i+1)*sizeof(unsigned long), NULL);
+		}
+		else {
+			ip = ((unsigned long *)cover_addr)[i+1];
+		}
+	//	if (i > j)
+	//		tprintf(",");
+		tprintf("0x%lx\n", ip);
+		i++;
+	}
+	tprintf("\n");
+	if (tcp->kcov_meta.is_main_tracee) {
+		__atomic_store_n((unsigned long *)cover_addr, 0, __ATOMIC_RELAXED);
+		tcp->kcov_meta.buf_pos = 0;
+	}
+	return 0;
 }
 
 static int
@@ -976,7 +1028,11 @@ trace_syscall_exiting(struct tcb *tcp)
 	tprints("\n");
 	dumpio(tcp);
 	line_ended();
-
+	//Dump kcov info
+	if (kcov_enabled) {
+		if (cover_buf_flush(tcp) < 0)
+			fprintf(stderr, "ERROR FLUSHING BUFFER\n");
+	}
 #ifdef USE_LIBUNWIND
 	if (stack_trace_enabled)
 		unwind_print_stacktrace(tcp);
@@ -1201,6 +1257,8 @@ struct sysent_buf {
 	struct_sysent ent;
 	char buf[sizeof("syscall_%lu") + sizeof(kernel_ulong_t) * 3];
 };
+
+
 
 static void
 free_sysent_buf(void *ptr)

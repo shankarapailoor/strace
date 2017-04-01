@@ -45,6 +45,8 @@
 #include "regs.h"
 #include "ptrace.h"
 
+#define PTR_ADDRESS_BUFSIZE 21
+
 int
 string_to_uint_ex(const char *const str, char **const endptr,
 		  const unsigned int max_val, const char *const accepted_ending)
@@ -889,6 +891,7 @@ printstr_ex(struct tcb *const tcp, const kernel_ulong_t addr,
 	static char *outstr;
 	unsigned int size;
 	unsigned int style = user_style;
+  int outstr_offset;
 	int rc;
 	int ellipsis;
 
@@ -898,13 +901,16 @@ printstr_ex(struct tcb *const tcp, const kernel_ulong_t addr,
 	}
 	/* Allocate static buffers if they are not allocated yet. */
 	if (!str) {
-		unsigned int outstr_size = 4 * max_strlen + /*for quotes and NUL:*/ 3;
+		unsigned int outstr_size = 4 * max_strlen + /*for quotes and NUL:*/ 3 + /*for printing ptr address*/ PTR_ADDRESS_BUFSIZE;
 
-		if (outstr_size / 4 != max_strlen)
+		if ((outstr_size-PTR_ADDRESS_BUFSIZE) / 4 != max_strlen)
 			die_out_of_memory();
 		str = xmalloc(max_strlen + 1);
 		outstr = xmalloc(outstr_size);
 	}
+
+  outstr_offset = 0;
+  outstr_offset = snprintf(outstr, PTR_ADDRESS_BUFSIZE, "&%p=", addr);
 
 	/* Fetch one byte more because string_quote may look one byte ahead. */
 	size = max_strlen + 1;
@@ -929,7 +935,7 @@ printstr_ex(struct tcb *const tcp, const kernel_ulong_t addr,
 	/* If string_quote didn't see NUL and (it was supposed to be ASCIZ str
 	 * or we were requested to print more than -s NUM chars)...
 	 */
-	ellipsis = string_quote(str, outstr, size, style)
+	ellipsis = string_quote(str, outstr+outstr_offset, size, style)
 		   && len
 		   && ((style & QUOTE_0_TERMINATED)
 		       || len > max_strlen);
