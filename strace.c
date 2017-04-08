@@ -641,6 +641,7 @@ printleader(struct tcb *tcp)
 			 * case 2: split log, we are the same tcb, but our last line
 			 * didn't finish ("SIGKILL nuked us after syscall entry" etc).
 			 */
+			fprintf(stderr, "syscall: %s, pid: %d, UNFINISHED\n", tcp->s_ent->sys_name, tcp->pid);
 			tprints(" <unfinished ...>\n");
 			printing_tcp->curcol = 0;
 		}
@@ -2357,6 +2358,11 @@ trace(void)
 		 * PTRACE_GETEVENTMSG returns old pid starting from Linux 3.0.
 		 * On 2.6 and earlier, it can return garbage.
 		 */
+		if (kcov_enabled) {
+			if (tcp->kcov_meta.is_main_tracee) {
+				
+			}
+		}
 		if (os_release >= KERNEL_VERSION(3,0,0))
 			tcp = maybe_switch_tcbs(tcp, pid);
 

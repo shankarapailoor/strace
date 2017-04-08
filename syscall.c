@@ -576,9 +576,14 @@ tcb_inject_opts(struct tcb *tcp)
 }
 
 unsigned long get_pos(struct tcb *tcp) {
+	int n;
+
 	if (tcp->kcov_meta.is_main_tracee)
 		return __atomic_load_n((unsigned long *)tcp->kcov_meta.mmap_area, __ATOMIC_RELAXED);
-	return  ptrace(PTRACE_PEEKDATA, tcp->pid, tcp->kcov_meta.mmap_area, NULL);
+	if ((n = ptrace(PTRACE_PEEKDATA, tcp->pid, tcp->kcov_meta.mmap_area, NULL)) < 0) {
+		perror("PTRACE_PEEKDATA");
+	}
+	return n;
 }
 static long
 tamper_with_syscall_entering(struct tcb *tcp, unsigned int *signo)
@@ -649,10 +654,14 @@ trace_syscall_entering(struct tcb *tcp, unsigned int *sig)
 {
 	int res, scno_good;
 
-	if (kcov_enabled && tcp->kcov_meta.just_forked) {
-		tcp->kcov_meta.mmap_area = setup_kcov(tcp->pid);
-		tcp->kcov_meta.just_forked = 0;
-		tcp->kcov_meta.buf_pos = get_pos(tcp);
+	if (kcov_enabled) {
+		if (tcp->kcov_meta.just_forked) {
+			tcp->kcov_meta.mmap_area = setup_kcov(tcp->pid);
+			tcp->kcov_meta.just_forked = 0;
+		}
+		if (tcp->kcov_meta.is_main_tracee)
+			tcp->kcov_meta.buf_pos = get_pos(tcp);
+		//fprintf(stderr, "syscall: %s, pid: %d, pos: %lu\n", tcp->s_ent->sys_name, tcp->pid, get_pos(tcp));
 	}
 	scno_good = res = get_scno(tcp);
 	if (res == 0)
@@ -669,6 +678,8 @@ trace_syscall_entering(struct tcb *tcp, unsigned int *sig)
 		 */
 		goto ret;
 	}
+	//tcp->kcov_meta.buf_pos = get_pos(tcp);
+	fprintf(stderr, "syscall: %s, pid: %d, pos: %d\n", tcp->s_ent->sys_name, tcp->pid, get_pos(tcp));
 
 #ifdef LINUX_MIPSO32
 	if (SEN_syscall == tcp->s_ent->sen)
@@ -772,12 +783,13 @@ int cover_buf_flush(struct tcb *tcp) {
 
 	if (tcp->kcov_meta.is_main_tracee) {
 		n = __atomic_load_n((unsigned long *)cover_addr, __ATOMIC_RELAXED);
+		fprintf(stderr, "IP END: %ld\n", n);
 	} else if ((n = ptrace(PTRACE_PEEKDATA, pid, cover_addr, NULL)) < 0) {
 		perror("PTRACE_PEEKDATA");
 		return -1;
 	}
 	
-	fprintf(stderr, "pid: %d, N: %ld\n", tcp->pid, n);
+	fprintf(stderr, "syscall: %s, pid: %d, buf_start: %d, buf_end: %ld\n", tcp->s_ent->sys_name, tcp->pid, i, n);
 	while(i < n) {
 		if (!tcp->kcov_meta.is_main_tracee) {
 			ip = ptrace(PTRACE_PEEKDATA, pid, cover_addr + (i+1)*sizeof(unsigned long), NULL);
@@ -790,10 +802,11 @@ int cover_buf_flush(struct tcb *tcp) {
 		tprintf("0x%lx\n", ip);
 		i++;
 	}
-	tprintf("\n");
 	if (tcp->kcov_meta.is_main_tracee) {
 		__atomic_store_n((unsigned long *)cover_addr, 0, __ATOMIC_RELAXED);
 		tcp->kcov_meta.buf_pos = 0;
+	} else {
+		tcp->kcov_meta.buf_pos = get_pos(tcp);
 	}
 	return 0;
 }
