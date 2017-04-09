@@ -658,6 +658,11 @@ trace_syscall_entering(struct tcb *tcp, unsigned int *sig)
 		if (tcp->kcov_meta.just_forked) {
 			tcp->kcov_meta.mmap_area = setup_kcov(tcp->pid);
 			tcp->kcov_meta.just_forked = 0;
+		} else if (tcp->s_ent->sen == SEN_execve &&
+					   !tcp->kcov_meta.is_main_tracee) {
+			//On exxc the cover buffers of the child disappear so we have
+			//to setupkcov again
+			tcp->kcov_meta.just_forked = 1;
 		}
 		if (tcp->kcov_meta.is_main_tracee)
 			tcp->kcov_meta.buf_pos = get_pos(tcp);
@@ -790,6 +795,7 @@ int cover_buf_flush(struct tcb *tcp) {
 	}
 	
 	fprintf(stderr, "syscall: %s, pid: %d, buf_start: %d, buf_end: %ld\n", tcp->s_ent->sys_name, tcp->pid, i, n);
+	tprintf("Cover: ");
 	while(i < n) {
 		if (!tcp->kcov_meta.is_main_tracee) {
 			ip = ptrace(PTRACE_PEEKDATA, pid, cover_addr + (i+1)*sizeof(unsigned long), NULL);
@@ -797,11 +803,12 @@ int cover_buf_flush(struct tcb *tcp) {
 		else {
 			ip = ((unsigned long *)cover_addr)[i+1];
 		}
-	//	if (i > j)
-	//		tprintf(",");
-		tprintf("0x%lx\n", ip);
+		if (i > j)
+			tprintf(",");
+		tprintf("0x%lx", ip);
 		i++;
 	}
+	tprintf("\n");
 	if (tcp->kcov_meta.is_main_tracee) {
 		__atomic_store_n((unsigned long *)cover_addr, 0, __ATOMIC_RELAXED);
 		tcp->kcov_meta.buf_pos = 0;
