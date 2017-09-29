@@ -30,7 +30,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
 #include "defs.h"
 #include "native_defs.h"
 #include "nsig.h"
@@ -39,6 +38,7 @@
 #include <sys/wait.h>
 /* for struct iovec */
 #include <sys/uio.h>
+#include <search.h>
 
 /* for __X32_SYSCALL_BIT */
 #include <asm/unistd.h>
@@ -46,6 +46,7 @@
 #include "regs.h"
 #include "ptrace.h"
 #include "setup_kcov.c"
+
 
 #if defined(SPARC64)
 # undef PTRACE_GETREGS
@@ -774,6 +775,40 @@ syscall_tampered(struct tcb *tcp)
 	return tcp->flags & TCB_TAMPERED;
 }
 
+int kcov_compare_func(const void *l, const void *r) {
+	const struct kcov_tsearch_entry *ml = l;
+	const struct kcov_tsearch_entry *mr = r;
+
+	if (ml->k < mr->k)
+		return -1;
+	else if (ml->k > mr->k)
+		return 1;
+	return 0;
+}
+
+struct kcov_tsearch_entry *make_entry(unsigned long ip) {
+	struct kcov_tsearch_entry *e;
+
+	e = (struct kcov_tsearch_entry*) calloc(sizeof(struct kcov_tsearch_entry), 0);
+	if (!e) {
+		printf("out of memory\n");
+		exit(EXIT_FAILURE);
+	}
+
+	e->k = ip;
+	e->v = "";
+    return e;
+}
+
+void kcov_free_func(void *mt_data) {
+	struct kcov_tsearch_entry *m = mt_data;
+	if(!m) {
+		return;
+	}
+	free(m);
+	return;
+}
+
 
 int cover_buf_flush(struct tcb *tcp) {
 	unsigned long cover_addr;
@@ -781,6 +816,8 @@ int cover_buf_flush(struct tcb *tcp) {
 	int i, j;
 	long n;
 	pid_t pid;
+	void *tree = 0;
+	struct kcov_tsearch_entry *e = 0;
 
 	pid = tcp->pid;
 	i = j = tcp->kcov_meta.buf_pos;
@@ -793,19 +830,27 @@ int cover_buf_flush(struct tcb *tcp) {
 		perror("PTRACE_PEEKDATA");
 		return -1;
 	}
-	
+
 	fprintf(stderr, "syscall: %s, pid: %d, buf_start: %d, buf_end: %ld\n", tcp->s_ent->sys_name, tcp->pid, i, n);
 	tprintf("Cover: ");
 	while(i < n) {
+		void *t = 0;
 		if (!tcp->kcov_meta.is_main_tracee) {
 			ip = ptrace(PTRACE_PEEKDATA, pid, cover_addr + (i+1)*sizeof(unsigned long), NULL);
 		}
 		else {
 			ip = ((unsigned long *)cover_addr)[i+1];
 		}
-		if (i > j)
-			tprintf(",");
-		tprintf("0x%lx", ip);
+		e = make_entry(ip);
+		if (!(t = tsearch(e, &tree, kcov_compare_func)))
+			exit(EXIT_FAILURE);
+        struct kcov_tsearch_entry *ret = *(struct kcov_tsearch_entry **)t;
+		if (ret == e) {
+			//We have a new entry;
+			if (i > j)
+				tprintf(",");
+			tprintf("0x%lx", ip);
+		}
 		i++;
 	}
 	tprintf("\n");
@@ -815,6 +860,7 @@ int cover_buf_flush(struct tcb *tcp) {
 	} else {
 		tcp->kcov_meta.buf_pos = get_pos(tcp);
 	}
+	tdestroy(tree, kcov_free_func);
 	return 0;
 }
 

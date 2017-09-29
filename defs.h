@@ -202,6 +202,11 @@ typedef struct ioctlent {
 	unsigned int code;
 } struct_ioctlent;
 
+struct kcov_tsearch_entry {
+	unsigned long k;
+	const char *v;
+};
+
 struct inject_opts {
 	uint16_t first;
 	uint16_t step;
