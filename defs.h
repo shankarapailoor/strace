@@ -219,9 +219,12 @@ struct inject_opts {
 
 struct kcov_meta {
 	unsigned long mmap_area;
-	unsigned long just_forked;
+    unsigned long parent_addr;
+	unsigned long need_setup;
+    unsigned long after_exec;
 	unsigned long buf_pos;
 	int is_main_tracee;
+    pid_t parent;
 };
 
 /* Trace Control Block */

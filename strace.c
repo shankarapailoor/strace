@@ -747,6 +747,8 @@ alloctcb(int pid)
 		if (!tcp->pid) {
 			memset(tcp, 0, sizeof(*tcp));
 			tcp->pid = pid;
+            tcp->kcov_meta.parent_addr = 0;
+            tcp->kcov_meta.parent = 0;
 #if SUPPORTED_PERSONALITIES > 1
 			tcp->currpers = current_personality;
 #endif
@@ -1962,6 +1964,24 @@ init(int argc, char *argv[])
 	print_pid_pfx = (outfname && followfork < 2 && (followfork == 1 || nprocs > 1));
 }
 
+static void get_process_parent_id(const pid_t pid, pid_t * ppid) {
+    char buffer[BUFSIZ];
+    sprintf(buffer, "/proc/%d/stat", pid);
+    FILE* fp = fopen(buffer, "r");
+    if (fp) {
+        size_t size = fread(buffer, sizeof (char), sizeof (buffer), fp);
+        if (size > 0) {
+            // See: http://man7.org/linux/man-pages/man5/proc.5.html section /proc/[pid]/stat
+            strtok(buffer, " "); // (1) pid  %d
+            strtok(NULL, " "); // (2) comm  %s
+            strtok(NULL, " "); // (3) state  %c
+            char * s_ppid = strtok(NULL, " "); // (4) ppid  %d
+            *ppid = atoi(s_ppid);
+        }
+        fclose(fp);
+    }
+}
+
 static struct tcb *
 pid2tcb(int pid)
 {
@@ -2078,10 +2098,22 @@ maybe_allocate_tcb(const int pid, int status)
 	}
 	if (followfork) {
 		/* We assume it's a fork/vfork/clone child */
+
+        pid_t parent;
 		struct tcb *tcp = alloctcb(pid);
-		tcp->flags |= TCB_ATTACHED | TCB_STARTUP | post_attach_sigstop;
+        tcp->flags |= TCB_ATTACHED | TCB_STARTUP | post_attach_sigstop;
+
+        get_process_parent_id(pid, &parent);
+        struct tcb *parent_tcp;
+        if ((parent_tcp = pid2tcb(parent))) {
+            if (!parent_tcp->kcov_meta.is_main_tracee) {
+                tcp->kcov_meta.parent = parent;
+                tcp->kcov_meta.parent_addr = parent_tcp->kcov_meta.mmap_area;
+            }
+        }
+
 		tcp->kcov_meta.is_main_tracee = false;
-		tcp->kcov_meta.just_forked = 1;
+		tcp->kcov_meta.need_setup = 1;
 		tcp->kcov_meta.buf_pos = 0;
 		newoutf(tcp);
 		if (!qflag)

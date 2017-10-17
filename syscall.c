@@ -565,7 +565,7 @@ static int arch_set_scno(struct tcb *, kernel_ulong_t);
 static void get_error(struct tcb *, const bool);
 static int arch_set_error(struct tcb *);
 static int arch_set_success(struct tcb *);
-static unsigned long setup_kcov(pid_t pid);
+static unsigned long setup_kcov(pid_t, pid_t, unsigned long);
 
 struct inject_opts *inject_vec[SUPPORTED_PERSONALITIES];
 
@@ -578,6 +578,9 @@ tcb_inject_opts(struct tcb *tcp)
 
 unsigned long get_pos(struct tcb *tcp) {
 	int n;
+
+	fprintf(stderr, "kcov area: %p\n", (unsigned long *)tcp->kcov_meta.mmap_area);
+	fprintf(stderr, "kcov area lu: %lu\n", tcp->kcov_meta.mmap_area);
 
 	if (tcp->kcov_meta.is_main_tracee)
 		return __atomic_load_n((unsigned long *)tcp->kcov_meta.mmap_area, __ATOMIC_RELAXED);
@@ -650,25 +653,12 @@ tamper_with_syscall_exiting(struct tcb *tcp)
 	return 0;
 }
 
+
 static int
 trace_syscall_entering(struct tcb *tcp, unsigned int *sig)
 {
 	int res, scno_good;
 
-	if (kcov_enabled) {
-		if (tcp->kcov_meta.just_forked) {
-			tcp->kcov_meta.mmap_area = setup_kcov(tcp->pid);
-			tcp->kcov_meta.just_forked = 0;
-		} else if (tcp->s_ent->sen == SEN_execve &&
-					   !tcp->kcov_meta.is_main_tracee) {
-			//On exxc the cover buffers of the child disappear so we have
-			//to setupkcov again
-			tcp->kcov_meta.just_forked = 1;
-		}
-		if (tcp->kcov_meta.is_main_tracee)
-			tcp->kcov_meta.buf_pos = get_pos(tcp);
-		//fprintf(stderr, "syscall: %s, pid: %d, pos: %lu\n", tcp->s_ent->sys_name, tcp->pid, get_pos(tcp));
-	}
 	scno_good = res = get_scno(tcp);
 	if (res == 0)
 		return res;
@@ -684,8 +674,36 @@ trace_syscall_entering(struct tcb *tcp, unsigned int *sig)
 		 */
 		goto ret;
 	}
+    if (kcov_enabled) {
+        if (tcp->kcov_meta.need_setup) {
+            if (tcp->kcov_meta.after_exec) {
+                //Since we mmap with MAP_PRIVATE we need to resetup the buffer
+                //Using map shared is a bit problematic since changes to that address
+                //space will be seen across processes
+                tcp->kcov_meta.mmap_area = setup_kcov(tcp->pid, 0, 0);
+                tcp->kcov_meta.after_exec = 0;
+            } else {
+                //We need to free our parent's cover buffer
+                tcp->kcov_meta.mmap_area = setup_kcov(tcp->pid,
+                                                      tcp->kcov_meta.parent,
+                                                      tcp->kcov_meta.parent_addr);
+            }
+            tcp->kcov_meta.need_setup = 0;
+            tcp->kcov_meta.buf_pos = get_pos(tcp);
+            if (Tflag || cflag)
+                gettimeofday(&tcp->etime, NULL);
+            return res;
+        } else if (tcp->s_ent->sen == SEN_execve &&
+                   !tcp->kcov_meta.is_main_tracee) {
+            //On exxc the cover buffers of the child disappear so we have
+            //to setupkcov again
+            tcp->kcov_meta.need_setup = 1;
+            tcp->kcov_meta.after_exec = 1;
+        }
+        tcp->kcov_meta.buf_pos = get_pos(tcp);
+    }
 	//tcp->kcov_meta.buf_pos = get_pos(tcp);
-	fprintf(stderr, "syscall: %s, pid: %d, pos: %d\n", tcp->s_ent->sys_name, tcp->pid, get_pos(tcp));
+	//fprintf(stderr, "syscall: %s, pid: %d, pos: %d\n", tcp->s_ent->sys_name, tcp->pid, tcp->kcov_meta.buf_pos);
 
 #ifdef LINUX_MIPSO32
 	if (SEN_syscall == tcp->s_ent->sen)
@@ -759,11 +777,14 @@ trace_syscall_entering(struct tcb *tcp, unsigned int *sig)
 	else
 		res = tcp->s_ent->sys_func(tcp);
 
+
 	fflush(tcp->outf);
  ret:
+
+	/* Measure the entrance time as late as possible to avoid errors. */
+
 	tcp->flags |= TCB_INSYSCALL;
 	tcp->sys_func_rval = res;
-	/* Measure the entrance time as late as possible to avoid errors. */
 	if (Tflag || cflag)
 		gettimeofday(&tcp->etime, NULL);
 	return res;
@@ -823,6 +844,9 @@ int cover_buf_flush(struct tcb *tcp) {
 	i = j = tcp->kcov_meta.buf_pos;
 	cover_addr = tcp->kcov_meta.mmap_area;
 
+    if (tcp->kcov_meta.after_exec)
+        return 0;
+
 	if (tcp->kcov_meta.is_main_tracee) {
 		n = __atomic_load_n((unsigned long *)cover_addr, __ATOMIC_RELAXED);
 		fprintf(stderr, "IP END: %ld\n", n);
@@ -831,7 +855,7 @@ int cover_buf_flush(struct tcb *tcp) {
 		return -1;
 	}
 
-	fprintf(stderr, "syscall: %s, pid: %d, buf_start: %d, buf_end: %ld\n", tcp->s_ent->sys_name, tcp->pid, i, n);
+	fprintf(stderr, "syscall: %s, pid: %d, buffer: %lu, buf_start: %d, buf_end: %ld\n", tcp->s_ent->sys_name, tcp->pid, tcp->kcov_meta.mmap_area, i, n);
 	tprintf("Cover: ");
 	while(i < n) {
 		void *t = 0;
@@ -858,7 +882,7 @@ int cover_buf_flush(struct tcb *tcp) {
 		__atomic_store_n((unsigned long *)cover_addr, 0, __ATOMIC_RELAXED);
 		tcp->kcov_meta.buf_pos = 0;
 	} else {
-		tcp->kcov_meta.buf_pos = get_pos(tcp);
+		tcp->kcov_meta.buf_pos = n;
 	}
 	tdestroy(tree, kcov_free_func);
 	return 0;
@@ -874,6 +898,7 @@ trace_syscall_exiting(struct tcb *tcp)
 	const char *u_error_str;
 
 	/* Measure the exit time as early as possible to avoid errors. */
+	fprintf(stderr, "syscall: %s with pid: %d is in exit\n", tcp->s_ent->sys_name, tcp->pid);
 	if (Tflag || cflag)
 		gettimeofday(&tv, NULL);
 
@@ -965,6 +990,7 @@ trace_syscall_exiting(struct tcb *tcp)
 			tprints(" (INJECTED)");
 	}
 	else if (!(sys_res & RVAL_NONE) && u_error) {
+		fprintf(stderr, "Syscall has error\n");
 		switch (u_error) {
 		/* Blocked signals do not interrupt any syscalls.
 		 * In this case syscalls don't return ERESTARTfoo codes.
@@ -1096,8 +1122,9 @@ trace_syscall_exiting(struct tcb *tcp)
 	line_ended();
 	//Dump kcov info
 	if (kcov_enabled) {
-		if (cover_buf_flush(tcp) < 0)
+		if (cover_buf_flush(tcp) < 0) {
 			fprintf(stderr, "ERROR FLUSHING BUFFER\n");
+		}
 	}
 #ifdef USE_LIBUNWIND
 	if (stack_trace_enabled)

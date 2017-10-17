@@ -18,10 +18,10 @@ int do_wait(pid_t pid, const char *name) {
 		return -1;
 	}
 	if (WIFSTOPPED(status)) {
-		if (WSTOPSIG(status) == (SIGTRAP | 0x80) || WSTOPSIG(status) == SIGTRAP) {
-      			return 0;
-    		}
-    		fprintf(stderr, "%s unexpectedly got status %s\n", name, strsignal(status));
+		if (WSTOPSIG(status) == SIGTRAP) {
+			return 0;
+		}
+		fprintf(stderr, "%s unexpectedly got status %s\n", name, strsignal(status));
 		return -1;
 	} else if (WIFEXITED(status)) {
   		fprintf(stderr, "%s got unexpected status %d\n", name, status);
@@ -64,7 +64,7 @@ int poke_text(pid_t pid, void *where, void *new_text, void *old_text, size_t len
 	}
 	return 0;
 }
-static unsigned long setup_kcov(pid_t pid) {
+static unsigned long setup_kcov(pid_t pid, pid_t parent_pid, unsigned long parent_cover) {
 	unsigned long cover_buffer;
 	unsigned long file_path;
 	struct user_regs_struct new_regs, old_regs;
@@ -86,7 +86,43 @@ static unsigned long setup_kcov(pid_t pid) {
 	new_instruction[2] = 0xff; //jmp
 	new_instruction[3] = 0xe0; //rax
 
+
 	memmove(&new_regs, &old_regs, sizeof(new_regs));
+
+	fprintf(stderr, "old regs rax: %d and old_rax: %d\n", old_regs.rax, old_regs.orig_rax);
+
+    //Replace the old instruction with new one and save old instruction
+    if (poke_text(pid, (void *) old_regs.rip, new_instruction, old_instruction, sizeof(new_instruction))) {
+        goto fail;
+    }
+
+    fprintf(stderr, "parent pid: %d\n", parent_pid);
+    if (parent_pid) {
+        /*
+         * We close the parent's buffer
+         */
+        new_regs.rip = old_regs.rip;
+        new_regs.orig_rax = 11;
+        new_regs.rax = 11;
+        new_regs.rdi = parent_cover;
+        new_regs.rsi = COVER_SIZE*sizeof(unsigned long);
+
+        // set the new registers with our syscall arguments
+        if (ptrace(PTRACE_SETREGS, pid, NULL, &new_regs)) {
+            perror("PTRACE_SETREGS");
+            goto fail;
+        }
+
+        if (singlestep(pid))
+            goto fail;
+
+        if (ptrace(PTRACE_GETREGS, pid, NULL, &new_regs)) {
+            perror("PTRACE_GETREGS");
+            return -1;
+        }
+
+        //fprintf(stderr, "munmapping parent buffer: %d\n", (int)new_regs.rax);
+    }
 
 	//Mmap memory in tracee for kcov file path
 	new_regs.rip = old_regs.rip;
@@ -99,10 +135,6 @@ static unsigned long setup_kcov(pid_t pid) {
 	new_regs.r8 = -1; //Fd
 	new_regs.r9 = 0; //Offset
 
-	//Replace the old instruction with new one and save old instruction
-	if (poke_text(pid, (void *) old_regs.rip, new_instruction, old_instruction, sizeof(new_instruction))) {
-    		goto fail;
-  	}
 
   	// set the new registers with our syscall arguments
   	if (ptrace(PTRACE_SETREGS, pid, NULL, &new_regs)) {
@@ -121,6 +153,8 @@ static unsigned long setup_kcov(pid_t pid) {
 	//address of mmap for file path
 	file_path = (unsigned long)new_regs.rax;
 
+	fprintf(stderr, "file path address: %p\n", file_path);
+
 	if ((void *)new_regs.rax == MAP_FAILED) {
 		fprintf(stderr, "failed to mmap\n");
 		goto fail;
@@ -137,7 +171,8 @@ static unsigned long setup_kcov(pid_t pid) {
 	new_regs.rdi = file_path;
 	new_regs.rsi = O_CREAT|O_RDWR;
 	new_regs.rdx = 0;
-	
+
+
 	if (poke_text(pid, (void *) old_regs.rip, new_instruction, NULL, sizeof(new_instruction))) {
     		goto fail;
   	}
@@ -167,6 +202,7 @@ static unsigned long setup_kcov(pid_t pid) {
 	new_regs.rsi = KCOV_INIT_TRACE;
 	new_regs.rdx = COVER_SIZE;
 
+
 	if (poke_text(pid, (void *) old_regs.rip, new_instruction, NULL, sizeof(new_instruction))) {
     		goto fail;
   	}
@@ -182,9 +218,12 @@ static unsigned long setup_kcov(pid_t pid) {
 
 
 	if (ptrace(PTRACE_GETREGS, pid, NULL, &new_regs)) {
-                perror("PTRACE_GETREGS");
-                return -1;
-        }
+		perror("PTRACE_GETREGS");
+		return -1;
+	}
+
+	fprintf(stderr, "init trace result: %d\n", new_regs.rax);
+
 
 	//Set up cover map in tracee
 	new_regs.rip = old_regs.rip;
@@ -193,7 +232,7 @@ static unsigned long setup_kcov(pid_t pid) {
 	new_regs.rdi = 0; //Pointer to the base
 	new_regs.rsi = COVER_SIZE*sizeof(unsigned long); //Length
 	new_regs.rdx = PROT_READ | PROT_WRITE; //Mode
-	new_regs.r10 = MAP_PRIVATE; //We want mmap at particular offset
+	new_regs.r10 = MAP_PRIVATE;
 	new_regs.r8 =  fd; //kcov filedescriptor
 	new_regs.r9 = 0; //
 
@@ -250,19 +289,45 @@ static unsigned long setup_kcov(pid_t pid) {
 		perror("PTRACE_GETREGS");
 		goto fail;
         }
- 
-	//Restore old instruction
-	if (poke_text(pid, (void *) old_regs.rip, old_instruction, NULL, sizeof(old_instruction))) {
-		goto fail;
-	}
 
-	//Restore old registers
-	if (ptrace(PTRACE_SETREGS, pid, NULL, &old_regs)) {
-    		perror("PTRACE_SETREGS");
-    		goto fail;
-  	}
-	
-	fprintf(stderr, "ENABLED KCOV\n");
+
+    new_regs.rip = old_regs.rip;
+    new_regs.orig_rax = 11;
+    new_regs.rax = 11;
+    new_regs.rdi = file_path;
+    new_regs.rsi = PAGE_SIZE;
+
+    // set the new registers with our syscall arguments
+    if (ptrace(PTRACE_SETREGS, pid, NULL, &new_regs)) {
+        perror("PTRACE_SETREGS");
+        goto fail;
+    }
+
+    if (singlestep(pid))
+        goto fail;
+
+    if (ptrace(PTRACE_GETREGS, pid, NULL, &new_regs)) {
+        perror("PTRACE_GETREGS");
+        return -1;
+    }
+
+    fprintf(stderr, "munmapping file path: %d\n", (int)new_regs.rax);
+    //Restore old instruction
+
+    if (poke_text(pid, (void *) old_regs.rip, old_instruction, NULL, sizeof(old_instruction))) {
+        goto fail;
+    }
+
+    //Restore old registers
+    //old_regs.rax = old_regs.orig_rax;
+
+    if (ptrace(PTRACE_SETREGS, pid, NULL, &old_regs)) {
+        perror("PTRACE_SETREGS");
+        goto fail;
+    }
+
+    fprintf(stderr, "ENABLED KCOV\n");
+
 	return (unsigned long) cover_buffer;
 
 fail:
