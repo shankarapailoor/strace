@@ -39,10 +39,12 @@
 #include <sys/types.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
+#include <string.h>
 #include <pwd.h>
 #include <grp.h>
 #include <dirent.h>
 #include <sys/utsname.h>
+#include <string.h>
 #ifdef HAVE_PRCTL
 # include <sys/prctl.h>
 #endif
@@ -1964,23 +1966,6 @@ init(int argc, char *argv[])
 	print_pid_pfx = (outfname && followfork < 2 && (followfork == 1 || nprocs > 1));
 }
 
-static void get_process_parent_id(const pid_t pid, pid_t * ppid) {
-    char buffer[BUFSIZ];
-    sprintf(buffer, "/proc/%d/stat", pid);
-    FILE* fp = fopen(buffer, "r");
-    if (fp) {
-        size_t size = fread(buffer, sizeof (char), sizeof (buffer), fp);
-        if (size > 0) {
-            // See: http://man7.org/linux/man-pages/man5/proc.5.html section /proc/[pid]/stat
-            strtok(buffer, " "); // (1) pid  %d
-            strtok(NULL, " "); // (2) comm  %s
-            strtok(NULL, " "); // (3) state  %c
-            char * s_ppid = strtok(NULL, " "); // (4) ppid  %d
-            *ppid = atoi(s_ppid);
-        }
-        fclose(fp);
-    }
-}
 
 static struct tcb *
 pid2tcb(int pid)
@@ -1997,6 +1982,36 @@ pid2tcb(int pid)
 	}
 
 	return NULL;
+}
+
+
+static void
+set_process_metadata(struct tcb *tcp)
+{
+    struct tcb *parent_tcp;
+    char buffer[BUFSIZ];
+    sprintf(buffer, "/proc/%d/stat", tcp->pid);
+    FILE* fp = fopen(buffer, "r");
+    if (fp) {
+        size_t size = fread(buffer, sizeof (char), sizeof (buffer), fp);
+        if (size > 0) {
+            // See: http://man7.org/linux/man-pages/man5/proc.5.html section /proc/[pid]/stat
+            strtok(buffer, " "); // (1) pid  %d
+            char *comm = strtok(NULL, " "); // (2) comm  %s
+            fprintf(stderr, "process name: %s\n", comm);
+            strncpy(tcp->kcov_meta.comm, comm, MAX_COMM_LEN);
+            strtok(NULL, " "); // (3) state  %c
+            char * s_ppid = strtok(NULL, " "); // (4) ppid  %d
+            tcp->kcov_meta.parent = atoi(s_ppid);
+            if ((parent_tcp = pid2tcb(tcp->kcov_meta.parent))) {
+                if (parent_tcp->kcov_meta.is_main_tracee) {
+                    tcp->kcov_meta.parent = 0;
+                    tcp->kcov_meta.parent_addr = 0;
+                }
+            }
+        }
+        fclose(fp);
+    }
 }
 
 static void
@@ -2099,18 +2114,10 @@ maybe_allocate_tcb(const int pid, int status)
 	if (followfork) {
 		/* We assume it's a fork/vfork/clone child */
 
-        pid_t parent;
 		struct tcb *tcp = alloctcb(pid);
         tcp->flags |= TCB_ATTACHED | TCB_STARTUP | post_attach_sigstop;
 
-        get_process_parent_id(pid, &parent);
-        struct tcb *parent_tcp;
-        if ((parent_tcp = pid2tcb(parent))) {
-            if (!parent_tcp->kcov_meta.is_main_tracee) {
-                tcp->kcov_meta.parent = parent;
-                tcp->kcov_meta.parent_addr = parent_tcp->kcov_meta.mmap_area;
-            }
-        }
+        set_process_metadata(tcp);
 
 		tcp->kcov_meta.is_main_tracee = false;
 		tcp->kcov_meta.need_setup = 1;
@@ -2392,7 +2399,7 @@ trace(void)
 		 */
 		if (kcov_enabled) {
 			if (tcp->kcov_meta.is_main_tracee) {
-				
+				//Need to update the process metadata
 			}
 		}
 		if (os_release >= KERNEL_VERSION(3,0,0))
@@ -2533,6 +2540,10 @@ show_stopsig:
 	 * Handle it.
 	 */
 	sig = 0;
+    if (kcov_enabled) {
+        if (tcp->kcov_meta.update_proc_meta)
+            set_process_metadata(tcp);
+    }
 	if (trace_syscall(tcp, &sig) < 0) {
 		/*
 		 * ptrace() failed in trace_syscall().
