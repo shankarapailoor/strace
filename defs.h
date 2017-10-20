@@ -197,6 +197,8 @@ extern char *stpcpy(char *dst, const char *src);
 # define PERSONALITY2_INCLUDE_FUNCS "empty.h"
 #endif
 
+#define MAX_COMM_LEN 16
+
 typedef struct ioctlent {
 	const char *symbol;
 	unsigned int code;
@@ -221,10 +223,13 @@ struct kcov_meta {
 	unsigned long mmap_area;
     unsigned long parent_addr;
 	unsigned long need_setup;
+    unsigned long update_proc_meta;
     unsigned long after_exec;
 	unsigned long buf_pos;
 	int is_main_tracee;
     pid_t parent;
+    char comm[MAX_COMM_LEN];
+
 };
 
 /* Trace Control Block */
