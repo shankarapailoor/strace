@@ -587,7 +587,8 @@ unsigned long get_pos(struct tcb *tcp) {
 	if ((n = ptrace(PTRACE_PEEKDATA, tcp->pid, tcp->kcov_meta.mmap_area, NULL)) < 0) {
 		perror("PTRACE_PEEKDATA");
 	}
-	return n;
+    fprintf(stderr, "FETCHED POSITION\n");
+    return n;
 }
 static long
 tamper_with_syscall_entering(struct tcb *tcp, unsigned int *signo)
@@ -680,6 +681,7 @@ trace_syscall_entering(struct tcb *tcp, unsigned int *sig)
                 //Since we mmap with MAP_PRIVATE we need to resetup the buffer
                 //Using map shared is a bit problematic since changes to that address
                 //space will be seen across processes
+                //fprintf(stderr, "name: %s\n", tcp->kcov_meta.comm);
                 tcp->kcov_meta.mmap_area = setup_kcov(tcp->pid, 0, 0);
                 tcp->kcov_meta.after_exec = 0;
             } else {
@@ -689,7 +691,9 @@ trace_syscall_entering(struct tcb *tcp, unsigned int *sig)
                                                       tcp->kcov_meta.parent_addr);
             }
             tcp->kcov_meta.need_setup = 0;
+            fprintf(stderr, "about to fetch position new\n");
             tcp->kcov_meta.buf_pos = get_pos(tcp);
+            fprintf(stderr, "fetched position new\n");
             if (Tflag || cflag)
                 gettimeofday(&tcp->etime, NULL);
             return res;
@@ -699,8 +703,11 @@ trace_syscall_entering(struct tcb *tcp, unsigned int *sig)
             //to setupkcov again
             tcp->kcov_meta.need_setup = 1;
             tcp->kcov_meta.after_exec = 1;
+            tcp->kcov_meta.update_proc_meta = 1;
         }
+        fprintf(stderr, "about to fetch position\n");
         tcp->kcov_meta.buf_pos = get_pos(tcp);
+        fprintf(stderr, "fetched position\n");
     }
 	//tcp->kcov_meta.buf_pos = get_pos(tcp);
 	//fprintf(stderr, "syscall: %s, pid: %d, pos: %d\n", tcp->s_ent->sys_name, tcp->pid, tcp->kcov_meta.buf_pos);
@@ -787,6 +794,7 @@ trace_syscall_entering(struct tcb *tcp, unsigned int *sig)
 	tcp->sys_func_rval = res;
 	if (Tflag || cflag)
 		gettimeofday(&tcp->etime, NULL);
+    fprintf(stderr, "finished tracing enter\n");
 	return res;
 }
 
@@ -840,12 +848,15 @@ int cover_buf_flush(struct tcb *tcp) {
 	void *tree = 0;
 	struct kcov_tsearch_entry *e = 0;
 
-	pid = tcp->pid;
+    fprintf(stderr, "flushing buf\n");
+    pid = tcp->pid;
 	i = j = tcp->kcov_meta.buf_pos;
 	cover_addr = tcp->kcov_meta.mmap_area;
 
-    if (tcp->kcov_meta.after_exec)
+    if (tcp->kcov_meta.after_exec) {
+        fprintf(stderr, "after exec\n");
         return 0;
+    }
 
 	if (tcp->kcov_meta.is_main_tracee) {
 		n = __atomic_load_n((unsigned long *)cover_addr, __ATOMIC_RELAXED);
@@ -856,7 +867,7 @@ int cover_buf_flush(struct tcb *tcp) {
 	}
 
 	fprintf(stderr, "syscall: %s, pid: %d, buffer: %lu, buf_start: %d, buf_end: %ld\n", tcp->s_ent->sys_name, tcp->pid, tcp->kcov_meta.mmap_area, i, n);
-	tprintf("Cover: ");
+	tprintf("\"Cover: ");
 	while(i < n) {
 		void *t = 0;
 		if (!tcp->kcov_meta.is_main_tracee) {
@@ -877,7 +888,7 @@ int cover_buf_flush(struct tcb *tcp) {
 		}
 		i++;
 	}
-	tprintf("\n");
+	tprintf("\"\n");
 	if (tcp->kcov_meta.is_main_tracee) {
 		__atomic_store_n((unsigned long *)cover_addr, 0, __ATOMIC_RELAXED);
 		tcp->kcov_meta.buf_pos = 0;
@@ -885,7 +896,8 @@ int cover_buf_flush(struct tcb *tcp) {
 		tcp->kcov_meta.buf_pos = n;
 	}
 	tdestroy(tree, kcov_free_func);
-	return 0;
+    fprintf(stderr, "finished flushing buf\n");
+    return 0;
 }
 
 static int
