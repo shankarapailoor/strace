@@ -227,6 +227,7 @@ struct kcov_meta {
     unsigned long after_exec;
 	unsigned long buf_pos;
 	int is_main_tracee;
+	int fd;
     pid_t parent;
     char comm[MAX_COMM_LEN];
 

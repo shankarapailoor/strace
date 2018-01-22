@@ -643,7 +643,6 @@ printleader(struct tcb *tcp)
 			 * case 2: split log, we are the same tcb, but our last line
 			 * didn't finish ("SIGKILL nuked us after syscall entry" etc).
 			 */
-			fprintf(stderr, "syscall: %s, pid: %d, UNFINISHED\n", tcp->s_ent->sys_name, tcp->pid);
 			tprints(" <unfinished ...>\n");
 			printing_tcp->curcol = 0;
 		}
@@ -751,6 +750,7 @@ alloctcb(int pid)
 			tcp->pid = pid;
             tcp->kcov_meta.parent_addr = 0;
             tcp->kcov_meta.parent = 0;
+            tcp->kcov_meta.mmap_area = 0;
 #if SUPPORTED_PERSONALITIES > 1
 			tcp->currpers = current_personality;
 #endif
@@ -1998,11 +1998,12 @@ set_process_metadata(struct tcb *tcp)
             // See: http://man7.org/linux/man-pages/man5/proc.5.html section /proc/[pid]/stat
             strtok(buffer, " "); // (1) pid  %d
             char *comm = strtok(NULL, " "); // (2) comm  %s
-            fprintf(stderr, "process name: %s\n", comm);
+            //fprintf(stderr, "process name: %s\n", comm);
             strncpy(tcp->kcov_meta.comm, comm, MAX_COMM_LEN);
-            strtok(NULL, " "); // (3) state  %c
+            char * state = strtok(NULL, " "); // (3) state  %c
             char * s_ppid = strtok(NULL, " "); // (4) ppid  %d
-            tcp->kcov_meta.parent = atoi(s_ppid);
+			tcp->kcov_meta.parent = atoi(s_ppid);
+			//fprintf(stderr, "parent name: %d\n", tcp->kcov_meta.parent);
             if ((parent_tcp = pid2tcb(tcp->kcov_meta.parent))) {
                 if (parent_tcp->kcov_meta.is_main_tracee) {
                     tcp->kcov_meta.parent = 0;

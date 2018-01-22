@@ -7,7 +7,9 @@
 
 #define KCOV_INIT_TRACE _IOR('c', 1, unsigned long)
 #define KCOV_ENABLE _IO('c', 100)
+#define KCOV_DISABLE _IO('c', 101)
 #define COVER_SIZE (16 << 20)
+#define KCOV_TRACE_CMP 1
 
 
 int do_wait(pid_t pid, const char *name) {
@@ -41,7 +43,7 @@ int poke_text(pid_t pid, void *where, void *new_text, void *old_text, size_t len
 	size_t copied;
 	long poke_data, peek_data;
 	if (len % sizeof(void *) != 0) {
-		printf("invalid len, not a multiple of %zd\n", sizeof(void *));
+		fprintf(stderr, "invalid len, not a multiple of %zd\n", sizeof(void *));
 		return -1;
 	}
 
@@ -64,7 +66,7 @@ int poke_text(pid_t pid, void *where, void *new_text, void *old_text, size_t len
 	}
 	return 0;
 }
-static unsigned long setup_kcov(pid_t pid, pid_t parent_pid, unsigned long parent_cover) {
+static unsigned long setup_kcov(pid_t pid, pid_t parent_pid, unsigned long parent_cover, int *kcov_fd) {
 	unsigned long cover_buffer;
 	unsigned long file_path;
 	struct user_regs_struct new_regs, old_regs;
@@ -97,15 +99,19 @@ static unsigned long setup_kcov(pid_t pid, pid_t parent_pid, unsigned long paren
     }
 
     fprintf(stderr, "parent pid: %d\n", parent_pid);
-    if (parent_pid) {
-        /*
-         * We close the parent's buffer
-         */
+    fprintf(stderr, "kcov_fd: %d\n", *kcov_fd);
+
+    if (*kcov_fd) {
         new_regs.rip = old_regs.rip;
-        new_regs.orig_rax = 11;
-        new_regs.rax = 11;
-        new_regs.rdi = parent_cover;
-        new_regs.rsi = COVER_SIZE*sizeof(unsigned long);
+        new_regs.orig_rax = 16;
+        new_regs.rax = 16;
+        new_regs.rdi = *kcov_fd;
+        new_regs.rsi = KCOV_DISABLE;
+        new_regs.rdx = 0;
+
+        if (poke_text(pid, (void *) old_regs.rip, new_instruction, NULL, sizeof(new_instruction))) {
+            goto fail;
+        }
 
         // set the new registers with our syscall arguments
         if (ptrace(PTRACE_SETREGS, pid, NULL, &new_regs)) {
@@ -116,14 +122,39 @@ static unsigned long setup_kcov(pid_t pid, pid_t parent_pid, unsigned long paren
         if (singlestep(pid))
             goto fail;
 
+
         if (ptrace(PTRACE_GETREGS, pid, NULL, &new_regs)) {
             perror("PTRACE_GETREGS");
-            return -1;
+            goto fail;
         }
 
-        //fprintf(stderr, "munmapping parent buffer: %d\n", (int)new_regs.rax);
-    }
 
+        new_regs.rip = old_regs.rip;
+        new_regs.orig_rax = 3;
+        new_regs.rax = 3;
+        new_regs.rdi = *kcov_fd;
+
+        if (poke_text(pid, (void *) old_regs.rip, new_instruction, NULL, sizeof(new_instruction))) {
+            goto fail;
+        }
+
+        // set the new registers with our syscall arguments
+        if (ptrace(PTRACE_SETREGS, pid, NULL, &new_regs)) {
+            perror("PTRACE_SETREGS");
+            goto fail;
+        }
+
+        if (singlestep(pid))
+            goto fail;
+
+
+        if (ptrace(PTRACE_GETREGS, pid, NULL, &new_regs)) {
+            perror("PTRACE_GETREGS");
+            goto fail;
+        }
+
+        fprintf(stderr, "closed: %ld", new_regs.rax);
+    }
 	//Mmap memory in tracee for kcov file path
 	new_regs.rip = old_regs.rip;
 	new_regs.orig_rax = 9; //mmap 
@@ -193,6 +224,7 @@ static unsigned long setup_kcov(pid_t pid, pid_t parent_pid, unsigned long paren
 
 	fd = new_regs.rax;
 	fprintf(stderr, "file descriptor: %d\n", fd);
+    *kcov_fd = fd;
 
 	//Initialize trace
 	new_regs.rip = old_regs.rip;
@@ -262,7 +294,7 @@ static unsigned long setup_kcov(pid_t pid, pid_t parent_pid, unsigned long paren
 		printf("failed to mmap\n");
 		goto fail;
 	}
-	fprintf(stderr, "cover buffer: %lu", cover_buffer);
+	fprintf(stderr, "cover buffer: %ld", cover_buffer);
 	//Enable coverage
 	new_regs.rip = old_regs.rip;
 	new_regs.orig_rax = 16;
@@ -288,9 +320,9 @@ static unsigned long setup_kcov(pid_t pid, pid_t parent_pid, unsigned long paren
 	if (ptrace(PTRACE_GETREGS, pid, NULL, &new_regs)) {
 		perror("PTRACE_GETREGS");
 		goto fail;
-        }
+    }
 
-
+    fprintf(stderr, "KCOV enable: %d\n", new_regs.rax);
     new_regs.rip = old_regs.rip;
     new_regs.orig_rax = 11;
     new_regs.rax = 11;
