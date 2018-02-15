@@ -90,6 +90,7 @@
 void
 print_ifindex(unsigned int ifindex)
 {
+/*
 #ifdef HAVE_IF_INDEXTONAME
 	char buf[IFNAMSIZ + 1];
 
@@ -100,6 +101,7 @@ print_ifindex(unsigned int ifindex)
 		return;
 	}
 #endif
+*/
 	tprintf("%u", ifindex);
 }
 

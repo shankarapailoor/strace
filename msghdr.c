@@ -256,6 +256,7 @@ decode_msg_control(struct tcb *const tcp, const kernel_ulong_t addr,
 		   const kernel_ulong_t in_control_len)
 {
 	if (!in_control_len)
+        tprints(", msg_control=NULL");
 		return;
 	tprints(", msg_control=");
 

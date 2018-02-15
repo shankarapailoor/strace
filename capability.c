@@ -127,11 +127,14 @@ print_cap_data(struct tcb *const tcp, const kernel_ulong_t addr,
 		return;
 
 	tprints("{effective=");
-	print_cap_bits(data[0].effective, len > 1 ? data[1].effective : 0);
+	//print_cap_bits(data[0].effective, len > 1 ? data[1].effective : 0);
+    tprintf("%zu", data[0].effective);
 	tprints(", permitted=");
-	print_cap_bits(data[0].permitted, len > 1 ? data[1].permitted : 0);
+	//print_cap_bits(data[0].permitted, len > 1 ? data[1].permitted : 0);
+    tprintf("%zu", data[0].permitted);
 	tprints(", inheritable=");
-	print_cap_bits(data[0].inheritable, len > 1 ? data[1].inheritable : 0);
+	//print_cap_bits(data[0].inheritable, len > 1 ? data[1].inheritable : 0);
+    tprintf("%zu", data[0].inheritable);
 	tprints("}");
 }
 
