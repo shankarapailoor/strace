@@ -550,7 +550,6 @@ strace_popen(const char *command)
 
 	set_cloexec_flag(fds[1]); /* never fails */
 
-	printf("STRACE_POPEN\n");	
 	pid = vfork();
 	if (pid < 0)
 		perror_msg_and_die("vfork");
@@ -1387,7 +1386,6 @@ startup_child(char **argv)
 	 */
 	params_for_tracee.pathname = NOMMU_SYSTEM ? xstrdup(pathname) : pathname;
 	if (kcov_enabled) {
-		printf("HERE\n");
 		kcov_fd = open("/sys/kernel/debug/kcov", O_RDWR);
 		if (kcov_fd == -1)
 			perror_msg_and_die("open");
@@ -1401,8 +1399,6 @@ startup_child(char **argv)
 							0);
 		if ((void *)main_tracee_cover == MAP_FAILED)
 			perror_msg_and_die("mmap");
-							
-							 
 	}
 #if defined HAVE_PRCTL && defined PR_SET_PTRACER && defined PR_SET_PTRACER_ANY
 	if (daemonized_tracer)

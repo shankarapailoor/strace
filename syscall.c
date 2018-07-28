@@ -834,7 +834,7 @@ int cover_buf_flush(struct tcb *tcp) {
 	}
 
 	tprintf("\"Cover: ");
-	
+
 	while(i < n) {
 		void *t = 0;
 		if (!tcp->kcov_meta.is_main_tracee) {

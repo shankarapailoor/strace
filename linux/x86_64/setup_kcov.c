@@ -75,7 +75,7 @@ static unsigned long setup_kcov(pid_t pid, pid_t parent_pid, unsigned long paren
 	int fd;
 
 	char path[32] = "/sys/kernel/debug/kcov\0";
-  
+
 	if (ptrace(PTRACE_GETREGS, pid, NULL, &old_regs)) {
         perror("PTRACE_GETREGS");
         ptrace(PTRACE_DETACH, pid, NULL, NULL);
@@ -90,15 +90,10 @@ static unsigned long setup_kcov(pid_t pid, pid_t parent_pid, unsigned long paren
 
 	memmove(&new_regs, &old_regs, sizeof(new_regs));
 
-	fprintf(stderr, "old regs rax: %d and old_rax: %d\n", old_regs.rax, old_regs.orig_rax);
-
     //Replace the old instruction with new one and save old instruction
     if (poke_text(pid, (void *) old_regs.rip, new_instruction, old_instruction, sizeof(new_instruction))) {
         goto fail;
     }
-
-    fprintf(stderr, "parent pid: %d\n", parent_pid);
-    fprintf(stderr, "kcov_fd: %d\n", *kcov_fd);
 
     if (*kcov_fd) {
         new_regs.rip = old_regs.rip;
@@ -151,168 +146,157 @@ static unsigned long setup_kcov(pid_t pid, pid_t parent_pid, unsigned long paren
             perror("PTRACE_GETREGS");
             goto fail;
         }
-
-        fprintf(stderr, "closed: %ld", new_regs.rax);
     }
-	//Mmap memory in tracee for kcov file path
-	new_regs.rip = old_regs.rip;
-	new_regs.orig_rax = 9; //mmap 
-	new_regs.rax = 9; //mmap
-	new_regs.rdi = 0; //NULL
-	new_regs.rsi = PAGE_SIZE; //Length
-	new_regs.rdx = PROT_READ | PROT_WRITE; //Protection
-	new_regs.r10 = MAP_PRIVATE | MAP_ANONYMOUS; //Flags
-	new_regs.r8 = -1; //Fd
-	new_regs.r9 = 0; //Offset
+    //Mmap memory in tracee for kcov file path
+    new_regs.rip = old_regs.rip;
+    new_regs.orig_rax = 9; //mmap
+    new_regs.rax = 9; //mmap
+    new_regs.rdi = 0; //NULL
+    new_regs.rsi = PAGE_SIZE; //Length
+    new_regs.rdx = PROT_READ | PROT_WRITE; //Protection
+    new_regs.r10 = MAP_PRIVATE | MAP_ANONYMOUS; //Flags
+    new_regs.r8 = -1; //Fd
+    new_regs.r9 = 0; //Offset
 
 
-  	// set the new registers with our syscall arguments
-  	if (ptrace(PTRACE_SETREGS, pid, NULL, &new_regs)) {
+    // set the new registers with our syscall arguments
+    if (ptrace(PTRACE_SETREGS, pid, NULL, &new_regs)) {
         perror("PTRACE_SETREGS");
         goto fail;
-  	}
+    }
 
-	if (singlestep(pid))
-		goto fail;
+    if (singlestep(pid))
+        goto fail;
 
-	if (ptrace(PTRACE_GETREGS, pid, NULL, &new_regs)) {
+    if (ptrace(PTRACE_GETREGS, pid, NULL, &new_regs)) {
         perror("PTRACE_GETREGS");
         return -1;
-  	}	
+    }
 
-	//address of mmap for file path
-	file_path = (unsigned long)new_regs.rax;
+    //address of mmap for file path
+    file_path = (unsigned long)new_regs.rax;
 
-
-	if ((void *)new_regs.rax == MAP_FAILED) {
-		fprintf(stderr, "failed to mmap\n");
-		goto fail;
-	}
-
-	//write kcov path to tracee's address space
-	if (poke_text(pid, (void *) file_path, path, NULL, sizeof(path))) {
-		fprintf(stderr, "FAILED COPY\n");
-	}
-
-	new_regs.rip = old_regs.rip;
-	new_regs.orig_rax = 2;
-	new_regs.rax = 2;
-	new_regs.rdi = file_path;
-	new_regs.rsi = O_CREAT|O_RDWR;
-	new_regs.rdx = 0;
-
-
-	if (poke_text(pid, (void *) old_regs.rip, new_instruction, NULL, sizeof(new_instruction))) {
+    if ((void *)new_regs.rax == MAP_FAILED) {
+        fprintf(stderr, "failed to mmap\n");
         goto fail;
-  	}
+    }
 
-  	// set the new registers with our syscall arguments
-  	if (ptrace(PTRACE_SETREGS, pid, NULL, &new_regs)) {
+    //write kcov path to tracee's address space
+    if (poke_text(pid, (void *) file_path, path, NULL, sizeof(path)))
+        fprintf(stderr, "FAILED COPY\n");
+
+    new_regs.rip = old_regs.rip;
+    new_regs.orig_rax = 2;
+    new_regs.rax = 2;
+    new_regs.rdi = file_path;
+    new_regs.rsi = O_CREAT|O_RDWR;
+    new_regs.rdx = 0;
+
+    if (poke_text(pid, (void *) old_regs.rip, new_instruction, NULL, sizeof(new_instruction)))
+        goto fail;
+
+    // set the new registers with our syscall arguments
+    if (ptrace(PTRACE_SETREGS, pid, NULL, &new_regs)) {
         perror("PTRACE_SETREGS");
         goto fail;
-  	}
+    }
 
-	if (singlestep(pid))
-		goto fail;
+    if (singlestep(pid))
+        goto fail;
 
-	if (ptrace(PTRACE_GETREGS, pid, NULL, &new_regs)) {
+    if (ptrace(PTRACE_GETREGS, pid, NULL, &new_regs)) {
         perror("PTRACE_GETREGS");
         return -1;
-  	}
+    }
 
-	fd = new_regs.rax;
+    fd = new_regs.rax;
     *kcov_fd = fd;
 
-	//Initialize trace
-	new_regs.rip = old_regs.rip;
-	new_regs.orig_rax = 16;
-	new_regs.rax = 16;
-	new_regs.rdi = fd;
-	new_regs.rsi = KCOV_INIT_TRACE;
-	new_regs.rdx = COVER_SIZE;
+    //Initialize trace
+    new_regs.rip = old_regs.rip;
+    new_regs.orig_rax = 16;
+    new_regs.rax = 16;
+    new_regs.rdi = fd;
+    new_regs.rsi = KCOV_INIT_TRACE;
+    new_regs.rdx = COVER_SIZE;
 
-
-	if (poke_text(pid, (void *) old_regs.rip, new_instruction, NULL, sizeof(new_instruction))) {
+    if (poke_text(pid, (void *) old_regs.rip, new_instruction, NULL, sizeof(new_instruction)))
         goto fail;
-  	}
 
-  	// set the new registers with our syscall arguments
-  	if (ptrace(PTRACE_SETREGS, pid, NULL, &new_regs)) {
+    // set the new registers with our syscall arguments
+    if (ptrace(PTRACE_SETREGS, pid, NULL, &new_regs)) {
         perror("PTRACE_SETREGS");
         goto fail;
-  	}
+    }
 
-	if (singlestep(pid))
-		goto fail;
-
-
-	if (ptrace(PTRACE_GETREGS, pid, NULL, &new_regs)) {
-		perror("PTRACE_GETREGS");
-		return -1;
-	}
-
-	//Set up cover map in tracee
-	new_regs.rip = old_regs.rip;
-	new_regs.orig_rax = 9; //MMAP
-	new_regs.rax = 9; //Default rax
-	new_regs.rdi = 0; //Pointer to the base
-	new_regs.rsi = COVER_SIZE*sizeof(unsigned long); //Length
-	new_regs.rdx = PROT_READ | PROT_WRITE; //Mode
-	new_regs.r10 = MAP_PRIVATE;
-	new_regs.r8 =  fd; //kcov filedescriptor
-	new_regs.r9 = 0; //
-
-	if (poke_text(pid, (void *) old_regs.rip, new_instruction, NULL, sizeof(new_instruction))) {
+    if (singlestep(pid))
         goto fail;
-	}
 
-  	// set the new registers with our syscall arguments
-  	if (ptrace(PTRACE_SETREGS, pid, NULL, &new_regs)) {
+
+    if (ptrace(PTRACE_GETREGS, pid, NULL, &new_regs)) {
+        perror("PTRACE_GETREGS");
+        return -1;
+    }
+
+    //Set up cover map in tracee
+    new_regs.rip = old_regs.rip;
+    new_regs.orig_rax = 9; //MMAP
+    new_regs.rax = 9; //Default rax
+    new_regs.rdi = 0; //Pointer to the base
+    new_regs.rsi = COVER_SIZE*sizeof(unsigned long); //Length
+    new_regs.rdx = PROT_READ | PROT_WRITE; //Mode
+    new_regs.r10 = MAP_PRIVATE;
+    new_regs.r8 =  fd; //kcov file descriptor
+    new_regs.r9 = 0;
+
+    if (poke_text(pid, (void *) old_regs.rip, new_instruction, NULL, sizeof(new_instruction)))
+        goto fail;
+
+    // set the new registers with our syscall arguments
+    if (ptrace(PTRACE_SETREGS, pid, NULL, &new_regs)) {
         perror("PTRACE_SETREGS");
         goto fail;
-  	}
+    }
 
-  	// invoke mmap(2)
-  	if (singlestep(pid)) {
-   		goto fail;
- 	}
+    // invoke mmap(2)
+    if (singlestep(pid)) {
+        goto fail;
+    }
 
 	if (ptrace(PTRACE_GETREGS, pid, NULL, &new_regs)) {
         perror("PTRACE_GETREGS");
         return -1;
-  	}
+    }
 
-	// this is the address of the memory we allocated
-	cover_buffer = (unsigned long)new_regs.rax;
-	if ((void *)new_regs.rax == MAP_FAILED) {
-		perror("mmap");
+    // this is the address of the memory we allocated
+    cover_buffer = (unsigned long)new_regs.rax;
+    if ((void *)new_regs.rax == MAP_FAILED) {
+        perror("mmap");
 		goto fail;
 	}
-	//Enable coverage
-	new_regs.rip = old_regs.rip;
-	new_regs.orig_rax = 16;
-	new_regs.rax = 16;
-	new_regs.rdi = fd;
-	new_regs.rsi = KCOV_ENABLE;
-	new_regs.rdx = 0;
+    //Enable coverage
+    new_regs.rip = old_regs.rip;
+    new_regs.orig_rax = 16;
+    new_regs.rax = 16;
+    new_regs.rdi = fd;
+    new_regs.rsi = KCOV_ENABLE;
+    new_regs.rdx = 0;
 
-	if (poke_text(pid, (void *) old_regs.rip, new_instruction, NULL, sizeof(new_instruction))) {
+    if (poke_text(pid, (void *) old_regs.rip, new_instruction, NULL, sizeof(new_instruction)))
         goto fail;
-  	}
 
-  	// set the new registers with our syscall arguments
-  	if (ptrace(PTRACE_SETREGS, pid, NULL, &new_regs)) {
+    // set the new registers with our syscall arguments
+    if (ptrace(PTRACE_SETREGS, pid, NULL, &new_regs)) {
         perror("PTRACE_SETREGS");
         goto fail;
-  	}
+    }
 
-	if (singlestep(pid))
-		goto fail;
+    if (singlestep(pid))
+        goto fail;
 
-
-	if (ptrace(PTRACE_GETREGS, pid, NULL, &new_regs)) {
-		perror("PTRACE_GETREGS");
-		goto fail;
+    if (ptrace(PTRACE_GETREGS, pid, NULL, &new_regs)) {
+        perror("PTRACE_GETREGS");
+        goto fail;
     }
 
     new_regs.rip = old_regs.rip;
