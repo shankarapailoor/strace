@@ -184,7 +184,6 @@ static unsigned long setup_kcov(pid_t pid, pid_t parent_pid, unsigned long paren
 	//address of mmap for file path
 	file_path = (unsigned long)new_regs.rax;
 
-	fprintf(stderr, "file path address: %p\n", file_path);
 
 	if ((void *)new_regs.rax == MAP_FAILED) {
 		fprintf(stderr, "failed to mmap\n");
@@ -223,7 +222,6 @@ static unsigned long setup_kcov(pid_t pid, pid_t parent_pid, unsigned long paren
   	}
 
 	fd = new_regs.rax;
-	fprintf(stderr, "file descriptor: %d\n", fd);
     *kcov_fd = fd;
 
 	//Initialize trace
@@ -254,7 +252,6 @@ static unsigned long setup_kcov(pid_t pid, pid_t parent_pid, unsigned long paren
 		return -1;
 	}
 
-	fprintf(stderr, "init trace result: %d\n", new_regs.rax);
 
 
 	//Set up cover map in tracee
@@ -294,7 +291,6 @@ static unsigned long setup_kcov(pid_t pid, pid_t parent_pid, unsigned long paren
 		printf("failed to mmap\n");
 		goto fail;
 	}
-	fprintf(stderr, "cover buffer: %ld", cover_buffer);
 	//Enable coverage
 	new_regs.rip = old_regs.rip;
 	new_regs.orig_rax = 16;
@@ -322,7 +318,6 @@ static unsigned long setup_kcov(pid_t pid, pid_t parent_pid, unsigned long paren
 		goto fail;
     }
 
-    fprintf(stderr, "KCOV enable: %d\n", new_regs.rax);
     new_regs.rip = old_regs.rip;
     new_regs.orig_rax = 11;
     new_regs.rax = 11;
@@ -343,7 +338,6 @@ static unsigned long setup_kcov(pid_t pid, pid_t parent_pid, unsigned long paren
         return -1;
     }
 
-    fprintf(stderr, "munmapping file path: %d\n", (int)new_regs.rax);
     //Restore old instruction
 
     if (poke_text(pid, (void *) old_regs.rip, old_instruction, NULL, sizeof(old_instruction))) {
@@ -358,7 +352,6 @@ static unsigned long setup_kcov(pid_t pid, pid_t parent_pid, unsigned long paren
         goto fail;
     }
 
-    fprintf(stderr, "ENABLED KCOV\n");
 
 	return (unsigned long) cover_buffer;
 

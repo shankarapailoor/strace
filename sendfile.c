@@ -39,10 +39,11 @@ SYS_FUNC(sendfile64)
 			return RVAL_DECODED;
 		}
 	} else {
+        /*
 		if (!syserror(tcp) && tcp->u_rval) {
 			tprints(" => ");
 			printnum_int64(tcp, tcp->u_arg[2], "%" PRIu64);
-		}
+		}*/
 		tprintf(", %" PRI_klu, tcp->u_arg[3]);
 	}
 

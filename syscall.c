@@ -579,8 +579,7 @@ tcb_inject_opts(struct tcb *tcp)
 unsigned long get_pos(struct tcb *tcp) {
 	int n;
 
-	//fprintf(stderr, "kcov area: %p\n", (unsigned long *)tcp->kcov_meta.mmap_area);
-	//fprintf(stderr, "%d: kcov area lu: %lu\n", tcp->pid, tcp->kcov_meta.mmap_area);
+
 	if (!tcp->kcov_meta.mmap_area)
 		return -1;
 
@@ -589,7 +588,6 @@ unsigned long get_pos(struct tcb *tcp) {
 	if ((n = ptrace(PTRACE_PEEKDATA, tcp->pid, tcp->kcov_meta.mmap_area, NULL)) < 0) {
 		perror("PTRACE_PEEKDATA");
 	}
-    //fprintf(stderr, "FETCHED POSITION\n");
     return n;
 }
 static long
@@ -824,81 +822,18 @@ int cover_buf_flush(struct tcb *tcp) {
 	void *tree = 0;
 	struct kcov_tsearch_entry *e = 0;
 
-    //fprintf(stderr, "%d: flushing buf: %lu\n", tcp->pid, tcp->kcov_meta.mmap_area);
     pid = tcp->pid;
 	i = j = tcp->kcov_meta.buf_pos;
 	cover_addr = tcp->kcov_meta.mmap_area;
 
 	if (tcp->kcov_meta.is_main_tracee) {
 		n = __atomic_load_n((unsigned long *)cover_addr, __ATOMIC_RELAXED);
-		//fprintf(stderr, "IP END: %ld\n", n);
 	} else if ((n = ptrace(PTRACE_PEEKDATA, pid, cover_addr, NULL)) < 0) {
 		perror("PTRACE_PEEKDATA");
 		return -1;
 	}
 
-	//fprintf(stderr, "syscall: %s, pid: %d, buffer: %lu, buf_start: %d, buf_end: %ld\n", tcp->s_ent->sys_name, tcp->pid, tcp->kcov_meta.mmap_area, i, n);
 	tprintf("\"Cover: ");
-    /*
-	if (tcp->kcov_meta.is_main_tracee) {
-		while(i < n) {
-			void *t = NULL;
-			ip = ((unsigned long *)cover_addr)[i+1];
-			e = make_entry(ip);
-			if (!(t = tsearch(e, &tree, kcov_compare_func)))
-				exit(EXIT_FAILURE);
-			struct kcov_tsearch_entry *ret = *(struct kcov_tsearch_entry **)t;
-			if (ret == e) {
-				//We have a new entry;
-				if (i > j)
-					tprintf(",");
-				tprintf("0x%lx", ip);
-			} else {
-				free(e);
-			}
-			i++;
-		}
-	} else {
-		unsigned long *tmp_buf = xmalloc((n-i)*sizeof(unsigned long));
-		if (!tmp_buf) {
-			perror("xalloc");
-			exit(1);
-		}
-		fprintf(stderr, "About to umoven\n");
-		int ret = umoven(tcp,
-			   tcp->kcov_meta.mmap_area+(i+1)*sizeof(unsigned long),
-			   (n-i)*sizeof(unsigned long),
-			   tmp_buf
-		);
-		fprintf(stderr, "Finished umoven: %d\n", ret);
-
-		if (ret < 0) {
-			fprintf(stderr, "Error moving data\n");
-			exit(1);
-		}
-		fprintf(stderr, "i: %d, n: %d\n", i, n);
-		while(i < n) {
-			void *t = NULL;
-			ip = tmp_buf[i+1];
-			//fprintf(stderr, "d\n");
-			e = make_entry(ip);
-			if (!(t = tsearch(e, &tree, kcov_compare_func)))
-				exit(EXIT_FAILURE);
-			struct kcov_tsearch_entry *ret = *(struct kcov_tsearch_entry **)t;
-			if (ret == e) {
-				//We have a new entry;
-				if (i > j)
-					tprintf(",");
-				tprintf("0x%lx", ip);
-			} else {
-				free(e);
-			}
-			i++;
-		}
-		fprintf(stderr, "about to free tmp_buf\n");
-		free(tmp_buf);
-	}
-    */
 	
 	while(i < n) {
 		void *t = 0;
@@ -930,7 +865,6 @@ int cover_buf_flush(struct tcb *tcp) {
 		tcp->kcov_meta.buf_pos = n;
 	}
 	tdestroy(tree, kcov_free_func);
-    fprintf(stderr, "finished flushing buf\n");
     return 0;
 }
 
@@ -953,7 +887,6 @@ prepare_kcov(struct tcb *tcp)
 static void
 handle_kcov(struct tcb *tcp)
 {
-	//fprintf(stderr, "%d HANDLING KCOV: %d\n", tcp->pid, tcp->kcov_meta.need_setup);
     if (!tcp->kcov_meta.need_setup) {
         if (cover_buf_flush(tcp) < 0) {
             fprintf(stderr, "ERROR FLUSHING BUFFER\n");
@@ -975,7 +908,6 @@ trace_syscall_exiting(struct tcb *tcp)
 	const char *u_error_str;
 
 	/* Measure the exit time as early as possible to avoid errors. */
-	//fprintf(stderr, "syscall: %s with pid: %d is in exit\n", tcp->s_ent->sys_name, tcp->pid);
 	if (Tflag || cflag)
 		gettimeofday(&tv, NULL);
 
@@ -1210,7 +1142,6 @@ trace_syscall_exiting(struct tcb *tcp)
             !tcp->kcov_meta.is_main_tracee) {
             //On exxc the cover buffers of the child disappear so we have
             //to setupkcov again
-            fprintf(stderr, "EXEC KCOV\n");
             tcp->kcov_meta.need_setup = 1;
             tcp->kcov_meta.after_exec = 1;
             tcp->kcov_meta.update_proc_meta = 1;
