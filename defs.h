@@ -220,7 +220,7 @@ struct inject_opts {
 #define INJECT_OPTS_RVAL_DEFAULT	(-(MAX_ERRNO_VALUE + 1))
 
 struct kcov_meta {
-	unsigned long mmap_area;
+    unsigned long mmap_area;
     unsigned long parent_addr;
 	unsigned long need_setup;
     unsigned long update_proc_meta;
@@ -230,7 +230,6 @@ struct kcov_meta {
 	int fd;
     pid_t parent;
     char comm[MAX_COMM_LEN];
-
 };
 
 /* Trace Control Block */
@@ -257,8 +256,7 @@ struct tcb {
 	struct timeval stime;	/* System time usage as of last process wait */
 	struct timeval dtime;	/* Delta for system time usage */
 	struct timeval etime;	/* Syscall entry time */
-	struct kcov_meta kcov_meta;	
-
+	struct kcov_meta kcov_meta;
 #ifdef USE_LIBUNWIND
 	struct UPT_info* libunwind_ui;
 	struct mmap_cache_t* mmap_cache;
